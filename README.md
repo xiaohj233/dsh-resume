@@ -16,6 +16,7 @@ Upstream DSH can resume stored sessions and repair torn logs, but it does not tr
 - Enables empty-submit continuation for an interrupted conversation.
 - Tracks active top-level sessions and subagents in `~/.dsh/resume-state.json`.
 - Restores only entries recorded as running at shutdown; completed or user-aborted turns are not restored.
+- Consumes the state file per session: each successfully resumed session is removed from the persisted set immediately (atomic write), so a crash or kill during restoration never loses the remaining sessions — the next boot continues with what is left. Failed resumes stay recorded and are retried on the next boot.
 - Automatically retries recorded subagents at startup; failed entries remain available through `resume_interrupted_subagents`.
 - Writes recovery diagnostics to `~/.dsh/resume-state.log`.
 

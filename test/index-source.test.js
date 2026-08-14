@@ -35,3 +35,15 @@ test("failed subagent retries remain pending", () => {
 	assert.match(INDEX_SOURCE, /failed\.push\(sessionId\)/);
 	assert.match(INDEX_SOURCE, /pendingSubagents\.push\(\.\.\.failed\)/);
 });
+
+test("restore consumes the state file per session, never all at once", () => {
+	/* A kill mid-restore must not lose the remaining sessions: the file is
+	   rewritten with the still-pending set after every successful resume,
+	   never blanked before the restore pass starts. */
+	assert.match(INDEX_SOURCE, /persistRemaining\(\)/);
+	assert.doesNotMatch(INDEX_SOURCE, /running:\s*\[\],\s*subagents:\s*\[\]\s*\}/, "no all-at-once blank write of the state file");
+	assert.match(INDEX_SOURCE, /remaining\.running\s*=\s*remaining\.running\.filter/);
+	assert.match(INDEX_SOURCE, /remaining\.subagents\s*=\s*remaining\.subagents\.filter/);
+	assert.match(INDEX_SOURCE, /failed \(kept for next boot\)/);
+});
+
