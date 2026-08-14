@@ -61,11 +61,11 @@ Override the `dsh-resume` row in a later profile patch when needed:
 Restore official package files before removing the plugin:
 
 ```sh
-pnpm --dir ~/.dsh/profiles/web exec dsh-resume-restore
+pnpm --dir "$DSH_HOME/profiles/web" exec dsh-resume-restore
 dsh plugin --profile web remove dsh-resume
 ```
 
-On Windows, replace `~/.dsh` with the configured `%DSH_HOME%` path if it differs. Normal Cordis shutdown does **not** reverse patches; shutdown is when continuity state must be preserved.
+When `$DSH_HOME` is unset the profile lives under the home directory (POSIX: `~/.dsh/profiles/web`; Windows PowerShell: `%USERPROFILE%\.dsh\profiles\web`); on Windows pass the resolved path to `pnpm --dir` instead of `~`. Normal Cordis shutdown does **not** reverse patches; shutdown is when continuity state must be preserved.
 
 After uninstall, `resume-state.json` and `resume-state.log` are no longer read. Delete them manually if their session identifiers and diagnostics are no longer needed.
 
