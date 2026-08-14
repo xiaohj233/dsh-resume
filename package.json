@@ -1,6 +1,6 @@
 {
   "name": "dsh-resume",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Resume interrupted DSH turns from an empty submit and restore sessions or subagents that were running at process shutdown.",
   "type": "module",
   "main": "lib/index.js",
@@ -24,6 +24,7 @@
     "bin",
     "cordis.patch.yml",
     "README.md",
+    "README.zh.md",
     "THIRD_PARTY_NOTICES.md"
   ],
   "dsh": {

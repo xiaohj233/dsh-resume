@@ -1,9 +1,17 @@
 // Behavior tests for lib/patch.js against byte-exact official rc.6 fixtures.
 // Every test builds its own temporary install tree (see helpers.mjs); nothing
 // touches the real profile, the real DSH_HOME, or the repo's node_modules.
+//
+// v2 patch semantics under test:
+// - adaptive by default: an untested version is patched when every hunk
+//   anchor still matches uniquely; otherwise that copy is skipped.
+// - strict option: only the exact tested version is patched.
+// - one drifted copy never blocks the others; module loading never throws.
+// - restore is ALWAYS strict (untested versions and unknown layouts refuse).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	patchInstalled,
@@ -24,45 +32,54 @@ const agentLoop = TARGETS[0];
 const session = TARGETS[1];
 const conversation = TARGETS[2];
 
-test("patchInstalled refuses a package whose installed version is not the exact rc.6, without writing", () => {
-	const install = makeInstall({ overrideVersions: { [session.name]: "0.1.0-rc.5" } });
+test("adaptive mode patches an untested version when every anchor matches", () => {
+	const install = makeInstall({ overrideVersions: { [session.name]: "0.1.0-rc.7" } });
 	try {
-		assert.throws(
-			() => patchInstalled([], { anchors: [install.anchor] }),
-			(error) => {
-				assert.match(error.message, new RegExp(`refusing to patch ${session.name.replace("/", "\\/")}`));
-				assert.match(error.message, /0\.1\.0-rc\.5/);
-				assert.match(error.message, /0\.1\.0-rc\.6/);
-				return true;
-			}
-		);
-		/* The refused package's file was never written. */
-		assert.equal(readFileSync(install.path(session), "utf8"), officialSource(session));
-	} finally {
-		install.cleanup();
-	}
-});
-
-test("patchInstalled refuses a non-rc.6 version before writing ANY file", () => {
-	/* agent-loop and conversation are valid rc.6 copies; session is not. */
-	const install = makeInstall({ overrideVersions: { [session.name]: "0.1.0" } });
-	try {
-		assert.throws(() => patchInstalled([], { anchors: [install.anchor] }), /refusing to patch/);
-		/* Not even the valid files were patched — the whole run is atomic. */
-		for (const target of TARGETS) {
-			assert.equal(readFileSync(install.path(target), "utf8"), officialSource(target));
+		const report = patchInstalled([], { anchors: [install.anchor] });
+		assert.equal(report.ok, true);
+		assert.ok(report.applied.some((entry) => entry.file === install.path(session)));
+		const adaptive = report.applied.find((entry) => entry.file === install.path(session));
+		assert.equal(adaptive.adaptive, true);
+		const source = readFileSync(install.path(session), "utf8");
+		for (const hunk of hunksFor(session, HUNKS)) {
+			assert.ok(source.includes(hunk.marker), `marker "${hunk.marker}" missing after adaptive patch`);
 		}
 	} finally {
 		install.cleanup();
 	}
 });
 
-test("unpatchInstalled also refuses a package at a non-rc.6 version", () => {
-	const install = makeInstall({ overrideVersions: { [session.name]: "0.1.0-rc.3" } });
+test("adaptive mode skips an untested version whose anchors drifted, writing nothing", () => {
+	const install = makeInstall({ overrideVersions: { [session.name]: "0.2.0" } });
 	try {
-		assert.throws(() => unpatchInstalled([], { anchors: [install.anchor] }), /refusing to patch/);
-		for (const target of TARGETS) {
-			assert.equal(readFileSync(install.path(target), "utf8"), officialSource(target));
+		writeFileSync(install.path(session), "// a rewritten upstream file\n");
+		const report = patchInstalled([], { anchors: [install.anchor] });
+		assert.equal(report.ok, false);
+		const skipped = report.skipped.find((entry) => entry.file === install.path(session));
+		assert.equal(skipped.reason, "version-anchor");
+		assert.equal(readFileSync(install.path(session), "utf8"), "// a rewritten upstream file\n");
+		/* Other copies still patched. */
+		for (const target of [agentLoop, conversation]) {
+			const source = readFileSync(install.path(target), "utf8");
+			assert.ok(source.includes(hunksFor(target, HUNKS)[0].marker));
+		}
+	} finally {
+		install.cleanup();
+	}
+});
+
+test("strict mode refuses every untested version even when anchors match", () => {
+	const install = makeInstall({ overrideVersions: { [session.name]: "0.1.0-rc.7" } });
+	try {
+		const report = patchInstalled([], { anchors: [install.anchor], strict: true });
+		assert.equal(report.ok, false);
+		const skipped = report.skipped.find((entry) => entry.file === install.path(session));
+		assert.equal(skipped.reason, "version");
+		assert.equal(readFileSync(install.path(session), "utf8"), officialSource(session));
+		/* Exact-version copies still patch in strict mode. */
+		for (const target of [agentLoop, conversation]) {
+			const source = readFileSync(install.path(target), "utf8");
+			assert.ok(source.includes(hunksFor(target, HUNKS)[0].marker));
 		}
 	} finally {
 		install.cleanup();
@@ -74,8 +91,8 @@ test("patchInstalled accepts the exact rc.6 install and reports the patched hunk
 	try {
 		const report = patchInstalled([], { anchors: [install.anchor] });
 		assert.equal(report.ok, true);
-		assert.ok(report.results.length > 0);
-		assert.ok(report.results.every((result) => result.status === "patched"));
+		assert.equal(report.applied.length, TARGETS.length);
+		assert.ok(report.applied.every((entry) => entry.adaptive !== true));
 		for (const target of TARGETS) {
 			const source = readFileSync(install.path(target), "utf8");
 			for (const hunk of hunksFor(target, HUNKS)) {
@@ -87,75 +104,84 @@ test("patchInstalled accepts the exact rc.6 install and reports the patched hunk
 	}
 });
 
-test("a hunk whose anchor is missing refuses the run without writing", () => {
+test("a drifted copy is skipped on its own; the other copies still patch", () => {
 	const install = makeInstall();
 	try {
-		/* Replace agent-loop's file with content that lacks the first hunk anchor. */
 		writeFileSync(install.path(agentLoop), "// not the real agent-loop\n");
-		assert.throws(
-			() => patchInstalled([], { anchors: [install.anchor] }),
-			(error) => {
-				assert.match(error.message, /patch anchor not found/);
-				assert.match(error.message, /agent-loop/);
-				return true;
-			}
-		);
+		const report = patchInstalled([], { anchors: [install.anchor] });
+		assert.equal(report.ok, false);
+		const skipped = report.skipped.find((entry) => entry.file === install.path(agentLoop));
+		assert.equal(skipped.reason, "anchor");
 		assert.equal(readFileSync(install.path(agentLoop), "utf8"), "// not the real agent-loop\n");
-		/* And the other files were not written either. */
 		for (const target of [session, conversation]) {
-			assert.equal(readFileSync(install.path(target), "utf8"), officialSource(target));
+			const source = readFileSync(install.path(target), "utf8");
+			assert.ok(source.includes(hunksFor(target, HUNKS)[0].marker), `${target.name} should still be patched`);
 		}
 	} finally {
 		install.cleanup();
 	}
 });
 
-test("a hunk whose anchor occurs more than once refuses the run without writing", () => {
+test("a hunk whose anchor occurs more than once skips that copy only", () => {
 	const install = makeInstall();
 	try {
 		const hunk = AGENT_LOOP_HUNKS[0];
 		const doubled = `${hunk.from}\n\n${hunk.from}\n`;
 		writeFileSync(install.path(agentLoop), doubled);
-		assert.throws(
-			() => patchInstalled([], { anchors: [install.anchor] }),
-			(error) => {
-				assert.match(error.message, /ambiguous/);
-				assert.match(error.message, /2/);
-				return true;
-			}
-		);
+		const report = patchInstalled([], { anchors: [install.anchor] });
+		assert.equal(report.ok, false);
+		const skipped = report.skipped.find((entry) => entry.file === install.path(agentLoop));
+		assert.equal(skipped.reason, "anchor");
+		assert.ok(skipped.detail.includes("ambiguous-anchor"));
 		assert.equal(readFileSync(install.path(agentLoop), "utf8"), doubled);
+		for (const target of [session, conversation]) {
+			assert.ok(readFileSync(install.path(target), "utf8").includes(hunksFor(target, HUNKS)[0].marker));
+		}
 	} finally {
 		install.cleanup();
 	}
 });
 
-test("an ambiguity anywhere refuses the whole run: no file is written at all", () => {
+test("an unreadable manifest skips that package without throwing", () => {
 	const install = makeInstall();
 	try {
-		/* agent-loop valid; session file carries a doubled anchor. */
-		writeFileSync(install.path(session), `${SESSION_HUNKS[0].from}\n\n${SESSION_HUNKS[0].from}\n`);
-		assert.throws(() => patchInstalled([], { anchors: [install.anchor] }), /ambiguous/);
-		/* The valid agent-loop and conversation files must be untouched. */
+		writeFileSync(install.manifestPath(session), "{ not json");
+		const report = patchInstalled([], { anchors: [install.anchor] });
+		assert.equal(report.ok, false);
+		assert.ok(report.skipped.some((entry) => entry.reason === "unreadable-manifest"));
 		for (const target of [agentLoop, conversation]) {
-			assert.equal(readFileSync(install.path(target), "utf8"), officialSource(target));
+			assert.ok(readFileSync(install.path(target), "utf8").includes(hunksFor(target, HUNKS)[0].marker));
 		}
-		assert.equal(readFileSync(install.path(session), "utf8"), `${SESSION_HUNKS[0].from}\n\n${SESSION_HUNKS[0].from}\n`);
 	} finally {
 		install.cleanup();
 	}
 });
 
-test("apply is idempotent: the second run skips every hunk and leaves the bytes untouched", () => {
+test("zero reachable targets reports ok with an explanatory summary and never throws", () => {
+	const install = makeInstall();
+	try {
+		const emptyDir = mkdtempSync(join(tmpdir(), "dsh-resume-empty-"));
+		const emptyAnchor = join(emptyDir, "anchor.json");
+		writeFileSync(emptyAnchor, "{}\n");
+		const report = patchInstalled([], { anchors: [emptyAnchor] });
+		assert.equal(report.ok, true);
+		assert.equal(report.applied.length, 0);
+		assert.match(report.summary, /0/);
+	} finally {
+		install.cleanup();
+	}
+});
+
+test("apply is idempotent: the second run skips every copy and leaves the bytes untouched", () => {
 	const install = makeInstall();
 	try {
 		const first = patchInstalled([], { anchors: [install.anchor] });
-		assert.ok(first.results.length > 0);
-		assert.ok(first.results.every((result) => result.status === "patched"));
+		assert.equal(first.ok, true);
 		const afterFirst = TARGETS.map((target) => readFileSync(install.path(target), "utf8"));
 		const second = patchInstalled([], { anchors: [install.anchor] });
-		assert.ok(second.results.length > 0);
-		assert.ok(second.results.every((result) => result.status === "skip"));
+		assert.equal(second.ok, true);
+		assert.equal(second.applied.length, 0);
+		assert.ok(second.skipped.every((entry) => entry.reason === "already-patched"));
 		TARGETS.forEach((target, index) => {
 			assert.equal(readFileSync(install.path(target), "utf8"), afterFirst[index]);
 		});
@@ -169,8 +195,9 @@ test("byte-exact roundtrip: restoring reverts all three official packages to the
 	try {
 		patchInstalled([], { anchors: [install.anchor] });
 		const undo = unpatchInstalled([], { anchors: [install.anchor] });
-		assert.ok(undo.results.length > 0);
-		assert.ok(undo.results.every((result) => result.status === "unpatched"));		for (const target of TARGETS) {
+		assert.equal(undo.ok, true);
+		assert.equal(undo.reverted.length, TARGETS.length);
+		for (const target of TARGETS) {
 			assert.equal(
 				readFileSync(install.path(target), "utf8"),
 				officialSource(target),
@@ -189,11 +216,27 @@ test("restore is idempotent: unpatching an already-unpatched install skips every
 		unpatchInstalled([], { anchors: [install.anchor] });
 		const pristine = TARGETS.map((target) => readFileSync(install.path(target), "utf8"));
 		const again = unpatchInstalled([], { anchors: [install.anchor] });
-		assert.ok(again.results.length > 0);
-		assert.ok(again.results.every((result) => result.status === "skip"));
+		assert.equal(again.ok, true);
+		assert.equal(again.reverted.length, 0);
+		assert.ok(again.skipped.every((entry) => entry.reason === "already-restored"));
 		TARGETS.forEach((target, index) => {
 			assert.equal(readFileSync(install.path(target), "utf8"), pristine[index]);
 		});
+	} finally {
+		install.cleanup();
+	}
+});
+
+test("restore is strict: an untested version is refused and left untouched", () => {
+	const install = makeInstall({ overrideVersions: { [session.name]: "0.1.0-rc.7" } });
+	try {
+		patchInstalled([], { anchors: [install.anchor] });
+		const before = readFileSync(install.path(session), "utf8");
+		const report = unpatchInstalled([], { anchors: [install.anchor] });
+		assert.equal(report.ok, false);
+		const skipped = report.skipped.find((entry) => entry.file === install.path(session));
+		assert.equal(skipped.reason, "version");
+		assert.equal(readFileSync(install.path(session), "utf8"), before);
 	} finally {
 		install.cleanup();
 	}
@@ -226,7 +269,11 @@ test("restore refuses when the marker is present but the to text occurs more tha
 		const hunk = SESSION_HUNKS[0];
 		const doubled = `${hunk.to}\n\n${hunk.to}\n`;
 		writeFileSync(install.path(session), doubled);
-		assert.throws(() => unpatchInstalled([], { anchors: [install.anchor] }), /ambiguous/);
+		const report = unpatchInstalled([], { anchors: [install.anchor] });
+		assert.equal(report.ok, false);
+		const skipped = report.skipped.find((entry) => entry.file === install.path(session));
+		assert.equal(skipped.reason, "restore-blocked");
+		assert.ok(skipped.detail.includes("ambiguous-to"));
 		assert.equal(readFileSync(install.path(session), "utf8"), doubled);
 	} finally {
 		install.cleanup();
@@ -239,7 +286,11 @@ test("restore refuses when the marker is present but the to text is gone", () =>
 		/* Marker present, replacement text missing — restore must fail loudly
 		   instead of corrupting the file. */
 		writeFileSync(install.path(session), `// ${SESSION_HUNKS[0].marker} only\n`);
-		assert.throws(() => unpatchInstalled([], { anchors: [install.anchor] }), /patch anchor not found/);
+		const report = unpatchInstalled([], { anchors: [install.anchor] });
+		assert.equal(report.ok, false);
+		const skipped = report.skipped.find((entry) => entry.file === install.path(session));
+		assert.equal(skipped.reason, "restore-blocked");
+		assert.ok(skipped.detail.includes("marker-without-to"));
 		assert.equal(readFileSync(install.path(session), "utf8"), `// ${SESSION_HUNKS[0].marker} only\n`);
 	} finally {
 		install.cleanup();
@@ -259,8 +310,9 @@ test("a hunk whose marker is already present is skipped without checking its anc
 		writeFileSync(install.path(session), content);
 		writeFileSync(install.path(conversation), content);
 		const report = patchInstalled([], { anchors: [install.anchor] });
-		assert.ok(report.results.length > 0);
-		assert.ok(report.results.every((result) => result.status === "skip"));
+		assert.equal(report.ok, true);
+		assert.equal(report.applied.length, 0);
+		assert.ok(report.skipped.every((entry) => entry.reason === "already-patched"));
 		assert.equal(readFileSync(install.path(agentLoop), "utf8"), content);
 	} finally {
 		install.cleanup();
@@ -271,14 +323,8 @@ test("the same real file reachable from two anchors is patched exactly once", ()
 	const install = makeInstall();
 	try {
 		const report = patchInstalled([], { anchors: [install.anchor, install.secondAnchor] });
-		const patchedHunks = report.results.filter((result) => result.status === "patched");
-		assert.ok(patchedHunks.length > 0);
-		/* Each hunk was applied to exactly one file copy. */
-		const perWhat = new Map();
-		for (const result of patchedHunks) {
-			perWhat.set(result.what, (perWhat.get(result.what) ?? 0) + 1);
-		}
-		for (const count of perWhat.values()) assert.equal(count, 1);
+		assert.equal(report.ok, true);
+		assert.equal(report.applied.length, TARGETS.length);
 		for (const target of TARGETS) {
 			const source = readFileSync(install.path(target), "utf8");
 			for (const hunk of hunksFor(target, HUNKS)) {

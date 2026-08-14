@@ -30,7 +30,7 @@ test("dsh-resume-restore reverts the patches on the active install and prints a 
 		patchInstalled([], { anchors: [install.anchor] });
 		const run = runBin(install, install.anchor);
 		assert.equal(run.status, 0, `expected exit 0, got ${run.status}; stderr: ${run.stderr}`);
-		assert.match(run.stdout, /unpatched/, "stdout must summarize the reverts");
+		assert.match(run.stdout, /restored/, "stdout must summarize the reverts");
 		for (const target of TARGETS) {
 			assert.equal(readFileSync(install.path(target), "utf8"), officialSource(target));
 		}
@@ -46,7 +46,8 @@ test("dsh-resume-restore exits nonzero and never swallows a refusal", () => {
 	try {
 		const run = runBin(install, install.anchor);
 		assert.notEqual(run.status, 0, "a version refusal must exit nonzero");
-		assert.match(run.stderr, /refusing to patch/);
+		assert.match(run.stderr, /refused/);
+		assert.match(run.stderr, /version/);
 		for (const target of TARGETS) {
 			assert.equal(readFileSync(install.path(target), "utf8"), officialSource(target));
 		}

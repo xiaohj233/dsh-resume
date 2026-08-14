@@ -29,11 +29,11 @@ The host plugin listens to agent lifecycle events and uses the official `agents.
 - `@deepseek-ai/dsh-session@0.1.0-rc.6`
 - `@deepseek-ai/dsh-client-ui-conversation@0.1.0-rc.6`
 
-Every target version and structural anchor is checked before any file is written. A missing or duplicate anchor refuses the whole operation. Patches are idempotent and have an explicit reverse operation.
+Every target hunk is idempotent and has an explicit reverse operation. Version policy is adaptive by default: a copy whose installed version differs from `0.1.0-rc.6` is still patched when every hunk anchor matches uniquely (recorded as an adaptive match), and skipped with a reason when anchors drifted. The programmatic `strict` option restores the old exact-version-only apply behavior. One drifted copy never blocks the others, and patch application never throws during module loading, so an upstream upgrade cannot brick the agent loop. Restore remains strictly version-guarded in every mode.
 
 ## Compatibility
 
-Requires DeepSeek Harness `0.1.0-rc.6`, Node.js `^22.19.0 || >=24`, and pnpm `>=10`. Other DSH versions are intentionally refused rather than patched optimistically.
+Tested with DeepSeek Harness `0.1.0-rc.6`, Node.js `^22.19.0 || >=24`, and pnpm `>=10`. After an upstream upgrade, run `dsh-resume-restore` and `verify:anchors` once to confirm every hunk is either applied or intentionally skipped.
 
 ## Install
 
