@@ -1,0 +1,66 @@
+{
+  "name": "dsh-resume",
+  "version": "0.1.0",
+  "description": "Resume interrupted DSH turns from an empty submit and restore sessions or subagents that were running at process shutdown.",
+  "type": "module",
+  "main": "lib/index.js",
+  "bin": {
+    "dsh-resume-restore": "bin/restore.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check lib/index.js && node --check lib/patch.js && node --check client.js && node --check bin/restore.mjs && node --check verify-anchors.mjs",
+    "verify:anchors": "node verify-anchors.mjs"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./patch": "./lib/patch.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client.js",
+    "bin",
+    "cordis.patch.yml",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-primitives"
+      ]
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-agent-presets": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-api-remotes": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-home-paths": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "react": "^18.2.0"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "pnpm": ">=10.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaohj233/dsh-resume.git"
+  },
+  "homepage": "https://github.com/xiaohj233/dsh-resume#readme",
+  "bugs": {
+    "url": "https://github.com/xiaohj233/dsh-resume/issues"
+  }
+}

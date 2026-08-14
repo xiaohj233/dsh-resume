@@ -1,0 +1,22 @@
+# dsh-resume — 中断续接 + 重启自动恢复
+#
+# 1) insert 本插件的 host 行（运行状态跟踪 + 启动自动恢复）。
+# 2) 改写 agent-loop 行：让 agent-loop 模块的 import 等待本插件的
+#    `resumePatchReady` 服务——对 agent-loop 文件的补丁（abort 时把半截
+#    thinking 折叠成 assistant/message）必须在 agent-loop 被 import 之前生效。
+- insert:
+    - id: dsh-resume
+      name: 'dsh-resume'
+      inject: [tools, agents, sessionPersistence, agentPresets, agentDefaultModel, loader]
+      config:
+        # 是否启用启动自动恢复（运行状态跟踪始终开启，用于记录"上次关闭时在跑"的会话）。
+        enabled: true
+        # 续接现在是无感的：恢复后不发可见消息，模型直接从上次断点继续生成。
+        # （resumeMessage 配置已废弃，无需再设置。）
+        # 延迟多少毫秒后开始恢复（让 web 服务器先完成启动）。
+        restoreDelayMs: 2000
+- id: agent-loop
+  name: '@deepseek-ai/dsh-agent-loop'
+  inject: [resumePatchReady]
+  config:
+    agents: []
