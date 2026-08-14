@@ -1,5 +1,7 @@
 # dsh-resume
 
+English | [中文](README.zh.md)
+
 **Status: Feature Plugin with Compatibility Patch. Tested only with DeepSeek Harness 0.1.0-rc.6.**
 
 `dsh-resume` adds two continuity behaviors to the DSH Web profile: an interrupted turn can continue from an empty submit without adding a visible "continue" message, and sessions that were still running when DSH stopped can be resumed after the next boot.

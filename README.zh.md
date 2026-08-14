@@ -1,5 +1,7 @@
 # dsh-resume（中断续接 + 重启自动恢复）
 
+[English](README.md) | 中文
+
 **状态：功能插件（含兼容补丁，Feature Plugin with Compatibility Patch）。仅在 DeepSeek Harness（深度求索 Harness）0.1.0-rc.6 上测试过。**
 
 `dsh-resume` 为 DSH Web profile 增加两种连续性行为：被中断的回合可以通过空提交（empty submit）继续，而不会添加一条可见的 "continue" 消息；DSH 停止时仍在运行的会话可以在下次启动后被恢复。
