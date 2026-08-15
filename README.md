@@ -41,7 +41,7 @@ Tested with DeepSeek Harness `0.1.0-rc.6`, Node.js `^22.19.0 || >=24`, and pnpm 
 ## Install
 
 ```sh
-dsh plugin --profile web add "github:xiaohj233/dsh-resume#v0.1.0"
+dsh plugin --profile web add "github:xiaohj233/dsh-resume#v0.2.1"
 ```
 
 Restart the Web profile. Startup applies the guarded compatibility patches before enabling resume behavior.
